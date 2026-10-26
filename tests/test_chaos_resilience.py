@@ -132,7 +132,7 @@ async def test_odoo_total_failure_triggers_fallback_notification(setup_fake_redi
     # Simular caída total de Odoo con ConnectError en todos los reintentos
     with patch("app.clients.odoo_client.odoo_client.create_ticket", new_callable=AsyncMock) as mock_odoo, \
          patch("app.config.settings.MOCK_ARTIFICIALIC", True), \
-         patch.object(notifier_client, "send_failure_fallback_notification", wraps=notifier_client.send_failure_fallback_notification) as mock_fallback:
+         patch.object(notifier_client, "send_failure_notification", wraps=notifier_client.send_failure_notification) as mock_fallback:
 
         mock_odoo.side_effect = OdooClientError("No fue posible conectar con Odoo tras agotar reintentos")
 
@@ -309,7 +309,7 @@ async def test_worker_cancellation_during_odoo_call_preserves_task_for_recovery(
     worker_task = asyncio.create_task(queue_manager._worker_loop(worker_id=10))
 
     with patch("app.queue_manager.odoo_client.create_ticket", side_effect=mock_slow_odoo), \
-         patch("app.queue_manager.notifier_client.send_failure_fallback_notification", new_callable=AsyncMock) as mock_fallback:
+         patch("app.queue_manager.notifier_client.send_failure_notification", new_callable=AsyncMock) as mock_fallback:
 
         # Esperar a que el worker tome la tarea y entre en la llamada a Odoo
         await asyncio.wait_for(odoo_started.wait(), timeout=3.0)
@@ -563,6 +563,121 @@ async def test_edge_failed_task_releases_idempotency_lock(setup_fake_redis):
         task_id_2 = resp2.json()["task_id"]
         assert task_id_2 != task_id_1, f"Se esperaba nuevo task_id pero se reutilizó {task_id_1}"
         assert "exitosamente" in resp2.json()["message"]
+
+
+# ------------------------------------------------------------------------------
+# 14. Test Envío de Notificación de Fallo Crítico (Mock y Despacho HTTP)
+# ------------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_send_failure_notification_mock_mode(setup_fake_redis):
+    task_id = "task_fail_mock_01"
+    req = TicketEnqueueRequest(
+        telefono="584123953003",
+        order_name="S_FAIL_MOCK",
+        partner_id=20959,
+        team_id=1,
+        ticket_comment="Prueba mock",
+    )
+    await state_store.register_task(task_id, req)
+
+    with patch("app.config.settings.MOCK_ARTIFICIALIC", True):
+        result = await notifier_client.send_failure_notification(
+            telefono="584123953003",
+            task_id=task_id,
+            error_detail="Timeout de conexión con Odoo",
+        )
+        assert result is True
+
+        task_data = await state_store.get_task(task_id)
+        assert task_data.notification_sent is True
+
+
+@pytest.mark.asyncio
+async def test_send_failure_notification_http_dispatch(setup_fake_redis):
+    task_id = "task_fail_http_02"
+    req = TicketEnqueueRequest(
+        telefono="584123953003",
+        order_name="S_FAIL_HTTP",
+        partner_id=20959,
+        team_id=1,
+        ticket_comment="Prueba http",
+    )
+    await state_store.register_task(task_id, req)
+
+    resp_200 = httpx.Response(
+        status_code=200,
+        json={"status": "sent", "id": "msg_fail_999"},
+        request=httpx.Request("POST", "http://test-art"),
+    )
+
+    with patch("app.config.settings.MOCK_ARTIFICIALIC", False), \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = resp_200
+
+        result = await notifier_client.send_failure_notification(
+            telefono="584123953003",
+            task_id=task_id,
+            error_detail="Odoo 500 Internal Error",
+        )
+        assert result is True
+        assert mock_post.called
+
+        # Validar payload y cabeceras
+        call_kwargs = mock_post.call_args.kwargs
+        assert f"Bearer {settings.ARTIFICIALIC_API_TOKEN}" in call_kwargs["headers"]["Authorization"]
+        assert "Lamentamos los inconvenientes" in call_kwargs["json"]["content"]
+        assert call_kwargs["json"]["metadata"]["type"] == "FALLO_CRITICO_ODOO"
+        assert call_kwargs["json"]["metadata"]["task_id"] == task_id
+
+        task_data = await state_store.get_task(task_id)
+        assert task_data.notification_sent is True
+
+
+# ------------------------------------------------------------------------------
+# 15. Test de Tolerancia a Fallos: Excepción en Artificialic no bloquea al Worker
+# ------------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_worker_failure_notification_exception_does_not_crash_worker(setup_fake_redis):
+    fake_r = setup_fake_redis
+
+    req = TicketEnqueueRequest(
+        telefono="584123953003",
+        order_name="S_FAIL_NOTIF_ERR",
+        partner_id=20959,
+        team_id=1,
+        ticket_comment="Comentario prueba",
+    )
+    task_id = "task_fail_notif_err"
+    await state_store.register_task(task_id, req)
+    await queue_manager.enqueue(task_id)
+
+    with patch("app.clients.odoo_client.odoo_client.create_ticket", new_callable=AsyncMock) as mock_odoo, \
+         patch.object(notifier_client, "send_failure_notification", new_callable=AsyncMock) as mock_notif:
+
+        mock_odoo.side_effect = OdooClientError("Odoo unreachable")
+        # Simular que el cliente de notificación levanta una excepción no controlada
+        mock_notif.side_effect = RuntimeError("Conexión abortada hacia Artificialic")
+
+        worker_task = asyncio.create_task(queue_manager._worker_loop(worker_id=1))
+        queue_manager._is_running = True
+
+        for _ in range(20):
+            task_info = await state_store.get_task(task_id)
+            if task_info and task_info.status == TicketStatus.FAILED:
+                break
+            await asyncio.sleep(0.1)
+
+        queue_manager._is_running = False
+        worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
+
+        final_state = await state_store.get_task(task_id)
+        assert final_state.status == TicketStatus.FAILED
+        assert mock_notif.called
+        # El worker debió remover la tarea de ticket:processing sin quedar bloqueado
+        processing = await fake_r.smembers(REDIS_PROCESSING_KEY)
+        assert task_id not in processing
+
 
 
 

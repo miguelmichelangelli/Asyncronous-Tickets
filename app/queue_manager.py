@@ -204,13 +204,13 @@ class QueueManager:
                     await state_store.set_failed(task_id=task_id, error_detail=error_detail)
                 logger.error(f"❌ [FAILED] Tarea {task_id} falló: {error_detail}")
 
-                # Disparo de notificación de contingencia para que el cliente no quede en el limbo
+                # Disparo de notificación de fallo crítico al cliente vía WhatsApp
                 if settings.SEND_FALLBACK_ON_ODOO_FAILURE and raw_data:
                     try:
-                        await notifier_client.send_failure_fallback_notification(
+                        await notifier_client.send_failure_notification(
                             telefono=raw_data.get("telefono", ""),
-                            order_name=raw_data.get("order_name", ""),
                             task_id=task_id or "unknown",
+                            error_detail=error_detail,
                         )
                     except Exception as fallback_err:
                         logger.error(f"⚠️ [NOTIFICADOR] Fallo al enviar mensaje de contingencia: {fallback_err}")

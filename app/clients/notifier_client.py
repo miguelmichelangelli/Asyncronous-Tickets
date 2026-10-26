@@ -57,8 +57,8 @@ class NotifierClient:
         phone_formatted = f"+{clean_phone}" if clean_phone else telefono
 
         payload = {
-            # "phoneNumber": phone_formatted,
-            "phoneNumber": '584123953003',
+            "phoneNumber": phone_formatted,
+            # "phoneNumber": '584123953003',
             "channelType": "WHATSAPP",
             "content": message_body,
             "metadata": {
@@ -157,36 +157,52 @@ class NotifierClient:
             notification_type="TICKET_OK",
         )
 
-    async def send_failure_fallback_notification(
+    async def send_failure_notification(
         self,
         telefono: str,
-        order_name: str,
-        task_id: str = "unknown",
+        task_id: str,
+        error_detail: str = "",
     ) -> bool:
         """
-        Envía un mensaje de contingencia al cliente cuando la creación en Odoo falló definitivamente.
-        Garantiza que el usuario final no quede en el limbo.
+        Notifica al usuario por WhatsApp cuando la creación del ticket falló definitivamente
+        tras agotar los reintentos contra Odoo ERP.
         """
-        fallback_msg = (
-            f"Hemos registrado tu reporte para el contrato {order_name}. "
-            f"En este momento nuestro sistema presenta alta demanda, por lo que un agente de soporte "
-            f"procesará tu caso manualmente y te contactará a la brevedad."
+        message_body = (
+            "⚠️ Lamentamos los inconvenientes. No pudimos procesar la creación de tu ticket "
+            "de forma automática en este momento debido a una intermitencia en el sistema."
         )
 
         if settings.MOCK_ARTIFICIALIC:
             formatted_log = (
-                f'📲 [MOCK CONTINGENCIA] Para: {telefono} | Mensaje: "{fallback_msg}" [Task: {task_id}]'
+                f'📲 [MOCK FALLO CRÍTICO] Para: {telefono} | Mensaje: "{message_body}" '
+                f"[Task: {task_id}] (Detalle error: {error_detail})"
             )
             print(formatted_log, flush=True)
-            logger.info(f"{formatted_log}")
+            logger.warning(formatted_log)
             await state_store.set_notification_status(task_id, sent=True)
             return True
 
         return await self._dispatch_with_retry(
             telefono=telefono,
-            message_body=fallback_msg,
+            message_body=message_body,
             task_id=task_id,
-            notification_type="CONTINGENCIA_FALLO_ODOO",
+            notification_type="FALLO_CRITICO_ODOO",
+        )
+
+    async def send_failure_fallback_notification(
+        self,
+        telefono: str,
+        order_name: str = "",
+        task_id: str = "unknown",
+        error_detail: str = "",
+    ) -> bool:
+        """
+        Alias para compatibilidad retroactiva con send_failure_fallback_notification.
+        """
+        return await self.send_failure_notification(
+            telefono=telefono,
+            task_id=task_id,
+            error_detail=error_detail or f"Orden: {order_name}",
         )
 
 

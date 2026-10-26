@@ -234,3 +234,4 @@ sudo systemctl status quickbot-tickets
 ```bash
 journalctl -u quickbot-tickets -f
 ```
+
