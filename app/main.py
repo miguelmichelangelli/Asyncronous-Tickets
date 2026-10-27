@@ -212,7 +212,7 @@ async def enqueue_ticket(request: TicketEnqueueRequest):
     - Si es nuevo, registra el Hash con TTL de 24h vinculando idemp_key, empuja a ticket:queue y responde 202.
     - Reintenta hasta 2 veces ante micro-cortes de Redis antes de responder HTTP 503.
     """
-    raw_idemp = f"{request.partner_id}:{request.order_name}:{request.team_id}:{request.ticket_comment.strip()}"
+    raw_idemp = f"{request.partner_id}:{request.order_name}:{request.team_id}:{request.ticket_comment.strip()}:{request.ticket_title.strip()}"
     idemp_hash = hashlib.sha256(raw_idemp.encode()).hexdigest()[:16]
     idemp_key = f"ticket:idemp:{idemp_hash}"
     candidate_task_id = uuid.uuid4().hex[:12]

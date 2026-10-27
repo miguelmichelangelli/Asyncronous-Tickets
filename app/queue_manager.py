@@ -157,6 +157,7 @@ class QueueManager:
                     "partner_id": int(raw_data.get("partner_id", 0)),
                     "team_id": int(raw_data.get("team_id", 1)),
                     "ticket_comment": raw_data.get("ticket_comment", ""),
+                    "ticket_title": raw_data.get("ticket_title", ""),
                 }
 
                 ticket_id, duration_seconds, _ = await odoo_client.create_ticket(

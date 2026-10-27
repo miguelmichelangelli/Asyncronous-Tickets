@@ -49,6 +49,11 @@ class TicketEnqueueRequest(BaseModel):
         description="Descripción o comentario para el ticket",
         examples=["Prueba"],
     )
+    ticket_title: str = Field(
+        default="",
+        description="Título o asunto del ticket en Odoo",
+        examples=["Título del Ticket"],
+    )
 
     @field_validator("telefono", mode="before")
     @classmethod
@@ -124,6 +129,14 @@ class TicketEnqueueRequest(BaseModel):
             return "Sin comentario adicional"
         return s
 
+    @field_validator("ticket_title", mode="before")
+    @classmethod
+    def clean_ticket_title(cls, v: Any) -> str:
+        """Limpia espacios en ticket_title. Si es None o False, retorna string vacío."""
+        if v is None or v is False:
+            return ""
+        return str(v).strip()
+
     def to_odoo_payload(self) -> Dict[str, Any]:
         """
         Genera estrictamente el payload esperado por el endpoint de Odoo,
@@ -134,6 +147,7 @@ class TicketEnqueueRequest(BaseModel):
             "partner_id": self.partner_id,
             "team_id": self.team_id,
             "ticket_comment": self.ticket_comment,
+            "ticket_title": self.ticket_title,
         }
 
 

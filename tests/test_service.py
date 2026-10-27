@@ -55,6 +55,7 @@ def test_schema_ticket_enqueue_request_valid():
         partner_id=20959,
         team_id=1,
         ticket_comment="Prueba de comentario",
+        ticket_title="Título del Ticket",
     )
     payload = req.to_odoo_payload()
     assert "telefono" not in payload
@@ -63,7 +64,17 @@ def test_schema_ticket_enqueue_request_valid():
         "partner_id": 20959,
         "team_id": 1,
         "ticket_comment": "Prueba de comentario",
+        "ticket_title": "Título del Ticket",
     }
+
+    # Caso con ticket_title vacío o no enviado
+    req_default = TicketEnqueueRequest(
+        telefono="584123953003",
+        order_name="S05226",
+        partner_id=20959,
+        team_id=1,
+    )
+    assert req_default.to_odoo_payload()["ticket_title"] == ""
 
 
 def test_schema_ticket_enqueue_request_invalid():

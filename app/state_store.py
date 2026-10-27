@@ -53,6 +53,7 @@ class StateStore:
             "partner_id": str(request_data.partner_id),
             "team_id": str(request_data.team_id),
             "ticket_comment": request_data.ticket_comment,
+            "ticket_title": request_data.ticket_title or "",
             "telefono": request_data.telefono,
             "ticket_id": "",
             "duration_seconds": "",
